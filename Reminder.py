@@ -16,7 +16,7 @@ def _get_font_families():
     fonts = sorted([x for x in tkFont.families() if not x.startswith('@')])
     temp.destroy()
     return fonts
-    
+
 DAYS = ('monday tuesday wednesday thursday friday saturday sunday '
         'mon tue wed thu fri sat sun '
         'mo tu we th fr sa su').split()
@@ -28,8 +28,8 @@ FONTS = _get_font_families()
 
 class ArgumentError(Exception):
     pass
-    
-    
+
+
 class Reminder(object):
     def __init__(self, time, days, text, warn=None, font=None):
         for arg in 'time days text warn font'.split():
@@ -37,19 +37,19 @@ class Reminder(object):
             error_string =  is_valid(locals()[arg])
             if error_string:
                 raise ArgumentError(error_string)
-                
-        if not warn:
+
+        if warn is None:
             warn = 5
         if not font:
             font_family = 'Arial' if 'Arial' in FONTS else FONTS[0]
             font = (font_family, '30')
-                
+
         self.__dict__.update(dict(time=time, days=days, text=text, warn=warn, font=font))
 
     def _is_valid_time(self, time):
         if not isinstance(time, datetime.datetime):
             return 'time (%s) is not a datetime' % time
-    
+
     def _is_valid_days(self, days):
         if not isinstance(days, list):
             return 'days (%s) is not a list' % days
@@ -60,16 +60,16 @@ class Reminder(object):
                 return '%s in days is not a string' % day
             if not day.lower() in DAYS:
                 return '%s in days is not one of: %s' % (day, ' '.join(DAYS))
-                
+
     def _is_valid_text(self, _):
         return
-        
+
     def _is_valid_warn(self, warn):
         if warn is None:
             return
         if not isinstance(warn, int):
             return 'warn (%s) is not an integer or None' % warn
-     
+
     def _is_valid_font(self, font):
         if font is None:
             return
@@ -82,10 +82,14 @@ class Reminder(object):
         if not isinstance(font[1], int):
             return 'font size (%s) is not an integer' % font[1]
 
+    def __repr__(self):
+        return "time: %s\ndays: %s\nfont: %s\nwarn: %s\ntext: %s\n" % \
+               (self.time, self.days, self.font, self.warn, self.text)
+
 
 def make_time(hours=None, minutes=None):
     """Create a date time on Jan 1st, 2000 with variable hours and minutes
-    
+
     If hours or minutes are not provided, the current time is used
     """
     if hours is None or minutes is None:
@@ -101,7 +105,7 @@ def _parse_time(time_string):
     """Parse a day and time string
     String should be of the form
     <day ... day> <hour>:<minute> [am/pm]
-    
+
     Where:
       day:    is the day's full name, 3 letter abbreviation, or 2 letter abbreviation
               or one of: all, everyday, every, always
@@ -109,28 +113,29 @@ def _parse_time(time_string):
               using 12 hour then requires that am/pm be given
       minute: two digit second
       am/pm:  is either am or pm ONLY if using 12 hour format
-      
+
     Examples:
       everyday     6:00 pm
       Tue Wed Fri 14:00
       Monday Fri   4:00 am
       Fr Th Sa    23:59
-      
+
     Returns:
-      datetime.datetime, ['list', 'of', 'days']          
+      datetime.datetime, ['list', 'of', 'days']
       The date time will always have Jan 1st, 2000 as the day
-      
+
     TODO:
       * support d/m/y with no day
     """
     tokens = [x.lower().strip() for x in time_string.split()]
-    
+
     days = []
     i = 0
     # check if it repeats every day
     if tokens[i] in ['everyday', 'every', 'all', 'always']:
         for day in DAYS[:7]:
             days.append(day)
+        i += 1
     # maybe it repeats only on certain days
     elif tokens[i] in DAYS:
         while tokens[i] in DAYS:
@@ -143,39 +148,35 @@ def _parse_time(time_string):
     else:
         for day in DAYS[:7]:
             days.append(day)
-    
+
     # remove the days, months, years etc so that all we have left is the time
-    tokens = tokens[i:]
-    
-    # determine if 12 hour or not
-    use_12_hour = False
-    if tokens[-1] in ['am', 'pm']:
-        use_12_hour = True
-    
-    time_split = tokens[-2 if use_12_hour else -1].split(':')
-    if len(time_split) > 2:
-        raise NotImplemented('Seconds not supported')
-    hour, minute = int(time_split[0]), int(time_split[1])
-    
-    # account for 12 hour clock
-    if use_12_hour and tokens[-1] == 'pm':
-        hour = (hour + 12) % 24
-        
-    return make_time(hour, minute), days
-    
+    time = _parse_hours_minutes(' '.join(tokens[i:]))
+
+    return time, days
+
+def _parse_hours_minutes(time_string):
+    for time_format in ("%I:%M %p", "%H:%M"):
+        try:
+            dt = datetime.datetime.strptime(time_string.lower(), time_format)
+            return make_time(dt.hour, dt.minute)
+        except ValueError:
+            pass
+
+    raise ValueError('Invalid time format, must be 12hr or 24hr format HH:MM [am/pm]')
+
 def _parse_font(font_string):
     """Parse font
-    
+
     string should be of the form:
     <font family name> <font size>
     """
     if not font_string:
         return None
     return (' '.join(font_string.split()[:-1]), int(font_string.split()[-1]))
-    
+
 def _parse_warn(warn_string):
     """Parse warning time line
-    
+
     string should be of the form:
     <warning minute number>
     """
@@ -184,13 +185,13 @@ def _parse_warn(warn_string):
     if not warn_string.isdigit():
         raise ArgumentError('warning minutes is not an integer')
     return int(warn_string)
-    
+
 def parse_file(file_path):
     """Parse a reminder file and return a representative object"""
     with open(file_path) as f:
         reminder_string = f.read()
     return parse(reminder_string)
-    
+
 def parse(reminder_string):
     """Parse a reminder string and return a representative object
 
@@ -200,11 +201,11 @@ def parse(reminder_string):
       warn: <minutes before warning>
       message goes here
       everything is taken literally
-      
+
     Required File Lines:
       # time: ...
       Message Contents
-    
+
     Returns
       Reminder
         time: datetime.datetime
@@ -212,33 +213,38 @@ def parse(reminder_string):
         font: ("font name", int(font_size))
         warn: <minutes before warning occurs>
         text: "multiline message contents"
-      
+
       The date time will always have Jan 1st, 2000 as the day
     """
     contents = reminder_string.splitlines(True)
-    
+
     text = ""
     commands = {}
     for line in contents:
         tokens = line.split()
+        if not tokens:
+            # empty line
+            text += line
+            continue
         possible_command = tokens[0].rstrip(':').lower()
         if possible_command in COMMANDS:
             commands[possible_command] = ' '.join(tokens[1:])
         else:
+            # text
             text += line
-            
+
     # strip the trailing newline
     text = text[:-1]
-    
+
     if not commands.get('time'):
         raise ArgumentError('time section required in file')
-    
+
     time, days = _parse_time(commands['time'])
     font = _parse_font(commands.get('font'))
     warn = _parse_warn(commands.get('warn'))
 
     return Reminder(time, days, text, warn, font)
-    
+
 
 def serialize_file(reminder, file_path):
     with open(file_path, 'w+') as f:
@@ -246,26 +252,26 @@ def serialize_file(reminder, file_path):
 
 def serialize(reminder):
     """Serialize a reminder object
-    
+
     time will always be changed to 24 hour format
-    
+
     TODO: do simplification with days
     """
     if not isinstance(reminder, Reminder):
         raise ArgumentError("reminder is not a reminder object")
-        
+
     contents = ""
-    
+
     days_s = ' '.join(reminder.days)
     time_s = '%s:%s' % (reminder.time.hour, reminder.time.minute)
     contents += 'time: %s %s\n' % (days_s, time_s)
 
     if reminder.font:
         contents += 'font: %s %s\n' % (reminder.font[0], reminder.font[1])
-        
-    if reminder.warn:
+
+    if reminder.warn != None and reminder.warn >= 0:
         contents += 'warn: %s\n' % reminder.warn
 
     contents += reminder.text
-    
+
     return contents

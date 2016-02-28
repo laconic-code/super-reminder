@@ -5,176 +5,107 @@ from sched import *
 import subprocess
 import time
 import datetime
+import Reminder
+import hashlib
 
-GLOBALS = dict()
-GLOBALS['scheduler'] = scheduler(time.time, time.sleep)
-GLOBALS['config_path'] = abspath('%s/.super_reminder/' % environ['HOME'])
+CONFIG_DIR = abspath('%s/.super_reminder/' % environ['HOME'])
+RELOAD_AFTER_MINUTES = 0.1
 
-"""
-TODO:
-    Use schedule to set timers for when to display a specific reminder INSTEAD of polling every minute
-    Maybe allow variable REMIND_BEFORE, maybe it needs to be in the file format?
+class ReminderScheduler(scheduler):
+    def __init__(self, config_dir, reload_after_minutes, *args, **kwargs):
+        scheduler.__init__(self, *args, **kwargs)
 
-"""
+        self.alarms = dict()
+        self.config_dir = config_dir
+        self.reload_after_minutes = reload_after_minutes
 
-
-
-# Minutes before alarm to start warning
-WARN_BEFORE_MINUTES = 5
-# Minutes after alarm time to stop warming
-STOP_REMIND_AFTER_MINUTES = 20
-# time between reloading the config files
-RELOAD_AFTER_MINUTES = 5
-# time between checking alarms
-CHECK_AFTER_MINUTES = 1
-
-DAYS = ('monday tuesday wednesday thursday friday saturday sunday '
-        'mon tue wed thu fri sat sun '
-        'mo tu we th fr sa su').split()
-MONTHS = ('january february march april may june july august september october november december '
-          'jan feb mar apr may jun jul aug sep oct nov dec').split()
-
-def make_time(hours=None, minutes=None):
-    """Create a date time on Jan 1st, 2000 with variable hours and minutes
-    
-    If hours or minutes are not provided, the current time is used
-    """
-    if hours is None or minutes is None:
-        now = datetime.datetime.now()
-        hours = now.hour
-        minutes = now.minute
-    return datetime.datetime(year=2000, month=1, day=1, hour=hours, minute=minutes)
-
-def standardize_day(day_of_week_string):
-    return DAYS[DAYS.index(day_of_week_string) % 7]
-
-def parse_time(time_string):
-    """Parse a day and time string
-    String should be of the form
-    <day ... day> <hour>:<minute> [am/pm]
-    
-    Where:
-      day:    is the day's full name, 3 letter abbreviation, or 2 letter abbreviation
-              or one of: all, everyday, every, always
-      hour:   is 24 or 12 hour format
-              using 12 hour then requires that am/pm be given
-      minute: two digit second
-      am/pm:  is either am or pm ONLY if using 12 hour format
-      
-    Examples:
-      everyday     6:00 pm
-      Tue Wed Fri 14:00
-      Monday Fri   4:00 am
-      Fr Th Sa    23:59
-      
-    Returns:
-      datetime.datetime, list_of_days
-      
-      The date time will always have Jan 1st, 2000 as the day
-      
-    TODO:
-      * support d/m/y with no day
-    """
-    tokens = [x.lower().strip() for x in time_string.split()]
-    
-    days = []
-    i = 0
-    # check if it repeats every day
-    if tokens[i] in ['everyday', 'every', 'all', 'always']:
-        for day in DAYS[:7]:
-            days.append(day)
-    # maybe it repeats only on certain days
-    elif tokens[i] in Days:
-        while tokens[i] in DAYS:
-            days.append(standardize_day(tokens[i]))
-            i += 1
-    # maybe it is only a certain day
-    elif '/' in tokens[i]:
-        raise NotImplemented('Only certain days is not currently implemented')
-    # just assume it is every day
-    else:
-        for days in DAYS[:7]:
-            days.append(day)
-    
-    # remove the days, months, years etc so that all we have left is the time
-    tokens = tokens[i:]
-    
-    # determine if 12 hour or not
-    use_12_hour = False
-    if tokens[-1] in ['am', 'pm']:
-        use_12_hour = True
-    
-    time_split = tokens[-2 if use_12_hour else -1].split(':')
-    if len(time_split) > 2:
-        raise NotImplemented('Seconds not supported')
-    hour, minute = int(time_split[0]), int(time_split[1])
-    
-    # account for 12 hour clock
-    if use_12_hour and tokens[-1] == 'pm':
-        hour = (hour + 12) % 24
-        
-    return make_time(hour, minute), days
-
-def reload_configs():
-    # grab all the config files
-    configs_path = GLOBALS['config_path']
-    files = [join(configs_path, f) for f
-             in listdir(configs_path)
-             if isfile(join(configs_path, f))]
-
-    alarms = dict()
-    for path in files:
+    def _file_checksum(self, path):
         with open(path) as f:
-            # the first line contains the time string
-            # we don't care about the rest of it
-            time = f.readlines()[0]
-            time, days = parse_time(time)
+            stamp = hashlib.sha256(f.read())
+        return stamp.hexdigest()
 
-        # maybe the alarm was triggered already today
-        old_alarm = GLOBALS.get('alarms', {}).get(time)
-        triggered = old_alarm['triggered'] if old_alarm else False
-        
-        alarms[time] = dict(path=path, days=days, triggered=triggered)
+    def reload_configs(self):
+        now = datetime.datetime.now()
 
-    # swap out the reloaded alarms
-    GLOBALS['alarms'] = alarms
-    
-    # reload every n minutes
-    GLOBALS['scheduler'].enter(60 * RELOAD_AFTER_MINUTES, 1, check_alarms, ())
+        # grab all the config files
+        files = [join(self.config_dir, f) for f
+                 in listdir(self.config_dir)
+                 if isfile(join(self.config_dir, f))]
 
-def check_alarms():
-    now = make_time() + datetime.timedelta(minutes=WARN_BEFORE_MINUTES)
+        for path in files:
+            checksum = self._file_checksum(path)
 
-    day_of_week = DAYS[datetime.datetime.now().weekday()]
+            old_alarm = self.alarms.get(path)
+            if old_alarm:
+                # skip unchanged alarm files
+                # TODO: Maybe this should be last access time, it would be cheaper
+                if old_alarm['checksum'] == checksum:
+                    continue
 
-    for alarm, data in GLOBALS['alarms'].iteritems():
-        days, path, triggered = data['days'], data['path'], data['triggered']
-        
-        # skip days we do not care about
-        if not day_of_week in days:
-            continue
+                # otherwise it changed and we need to unschedule to old alarm
+                try:
+                    self.cancel(old_alarm['event'])
+                except ValueError as e:
+                    # the event is already out of the queue (already ran)
+                    pass
 
-        # stop reminding people after this time
-        stop_remind_time = alarm + datetime.timedelta(minutes=STOP_REMIND_AFTER_MINUTES)
+            reminder = Reminder.parse_file(path)
 
-        # pop up reminder and note as triggered for today
-        if alarm <= now and not triggered and not stop_remind_time < now:
-            subprocess.call(["python", "SuperReminder.py", path])
-            GLOBALS['alarms'][alarm]['triggered'] = True
+            event = None
+            if Reminder.DAYS[now.weekday()] in reminder.days:
+                event = self.try_schedule(reminder, path)
 
-        # unset triggered after wait time
-        if stop_remind_time < now and triggered:
-            GLOBALS['alarms'][alarm]['triggered'] = False
-            
-    # check every n minutes
-    GLOBALS['scheduler'].enter(60 * CHECK_AFTER_MINUTES, 1, check_alarms, ())
-    
-    
+            self.alarms[path] = dict(checksum=checksum, reminder=reminder,
+                                event=event)
+
+        # reload every n minutes
+        self.enter(60 * self.reload_after_minutes, 1, self.reload_configs, ())
+
+    def show_reminder(self, path):
+        now = datetime.datetime.now()
+        subprocess.call(["python", "SuperReminder.py", path])
+        import pdb; pdb.set_trace()
+
+        alarm = self.alarms[path]
+        reminder = alarm['reminder']
+        days_in_week = 7
+
+        today_string = Reminder.DAYS[now.weekday()]
+
+        # get the next day to run the alarm
+        next_day = reminder.days[(reminder.days.index(today_string) + 1)
+                                 % len(reminder.days)]
+
+        # get a list of days starting from tomorrow
+        # ex if today is Friday ['Saturday', 'Sunday', 'Monday', ..., 'Friday']
+        days = [Reminder.DAYS[(now.weekday() + i + 1) % days_in_week]
+                for i in range(days_in_week)]
+        days_until_next_day = days.index(next_day) + 1
+
+        event = self.try_schedule(reminder, path, days_until_next_day)
+        alarm['event'] = event
+
+    def try_schedule(self, reminder, path, days_offset=0):
+        now = datetime.datetime.now()
+        warning_minutes = datetime.timedelta(minutes=reminder.warn)
+        days_offset = datetime.timedelta(days=days_offset)
+        target_time = (reminder.time - warning_minutes) + days_offset
+        target_time = target_time
+        current_time = Reminder.make_time().replace(second=now.second)
+
+        time_to_reminder =  (target_time - current_time).total_seconds()
+        if time_to_reminder > 0:
+            print "Next update in %s" % (target_time - current_time)
+            return self.enter(time_to_reminder, 1, self.show_reminder, (path,))
+
+        return None
+
 if __name__ == "__main__":
     try:
-        mkdir(GLOBALS['config_path'])
+        mkdir(CONFIG_DIR)
     except:
         pass
-    reload_configs()
-    GLOBALS['scheduler'].enter(1, 1, check_alarms, ())
-    GLOBALS['scheduler'].run()
+    reminder_scheduler = ReminderScheduler(CONFIG_DIR, RELOAD_AFTER_MINUTES,
+                                           time.time, time.sleep)
+    reminder_scheduler.reload_configs()
+    reminder_scheduler.run()
