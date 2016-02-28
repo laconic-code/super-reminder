@@ -11,6 +11,11 @@ import hashlib
 CONFIG_DIR = abspath('%s/.super_reminder/' % environ['HOME'])
 RELOAD_AFTER_MINUTES = 0.1
 
+"""
+TODO:
+    Logging
+"""
+
 class ReminderScheduler(scheduler):
     def __init__(self, config_dir, reload_after_minutes, *args, **kwargs):
         scheduler.__init__(self, *args, **kwargs)
@@ -51,54 +56,82 @@ class ReminderScheduler(scheduler):
 
             reminder = Reminder.parse_file(path)
 
-            event = None
-            if Reminder.DAYS[now.weekday()] in reminder.days:
-                event = self.try_schedule(reminder, path)
+            alarm = dict(checksum=checksum, reminder=reminder,
+                                event=None, path=path)
 
-            self.alarms[path] = dict(checksum=checksum, reminder=reminder,
-                                event=event)
+            alarm['event'] = self.schedule(alarm, False)
+
+            self.alarms[path] = alarm
 
         # reload every n minutes
         self.enter(60 * self.reload_after_minutes, 1, self.reload_configs, ())
 
-    def show_reminder(self, path):
-        now = datetime.datetime.now()
-        subprocess.call(["python", "SuperReminder.py", path])
-        import pdb; pdb.set_trace()
+    def show_reminder(self, alarm):
+        subprocess.call(["python", "SuperReminder.py", alarm['path']])
+        alarm['event'] = self.schedule(alarm, True)
 
-        alarm = self.alarms[path]
-        reminder = alarm['reminder']
+    def _days_until_next_alarm(self, alarm):
         days_in_week = 7
+        now = datetime.datetime.now()
+        reminder = alarm['reminder']
 
         today_string = Reminder.DAYS[now.weekday()]
-
-        # get the next day to run the alarm
-        next_day = reminder.days[(reminder.days.index(today_string) + 1)
-                                 % len(reminder.days)]
 
         # get a list of days starting from tomorrow
         # ex if today is Friday ['Saturday', 'Sunday', 'Monday', ..., 'Friday']
         days = [Reminder.DAYS[(now.weekday() + i + 1) % days_in_week]
                 for i in range(days_in_week)]
-        days_until_next_day = days.index(next_day) + 1
 
-        event = self.try_schedule(reminder, path, days_until_next_day)
-        alarm['event'] = event
+        # get the next day to run the alarm
+        for day in days:
+            if day in reminder.days:
+                day_index = reminder.days.index(day)
+                next_day = reminder.days[(day_index + 1) % len(reminder.days)]
+                break
 
-    def try_schedule(self, reminder, path, days_offset=0):
+
+        return days.index(next_day) + 1
+
+    def _seconds_to_next_reminder(self, alarm, days_offset=0):
         now = datetime.datetime.now()
+        reminder = alarm['reminder']
+
         warning_minutes = datetime.timedelta(minutes=reminder.warn)
         days_offset = datetime.timedelta(days=days_offset)
         target_time = (reminder.time - warning_minutes) + days_offset
         target_time = target_time
         current_time = Reminder.make_time().replace(second=now.second)
 
-        time_to_reminder =  (target_time - current_time).total_seconds()
-        if time_to_reminder > 0:
-            print "Next update in %s" % (target_time - current_time)
-            return self.enter(time_to_reminder, 1, self.show_reminder, (path,))
+        return (target_time - current_time).total_seconds()
 
-        return None
+    def schedule(self, alarm, run_today):
+        # get the seconds to the next reminder, assuming it is today
+        seconds_to_next_reminder = self._seconds_to_next_reminder(alarm)
+        today = Reminder.DAYS[datetime.datetime.now().weekday()]
+        can_run_today = today in alarm['reminder'].days
+
+        if not run_today and can_run_today:
+            # The alarm may be run later today
+            if seconds_to_next_reminder > 0:
+                print "Next update in %s for %s" % (datetime.timedelta(seconds=seconds_to_next_reminder), alarm['path'])
+                return self.enter(seconds_to_next_reminder, 1,
+                                  self.show_reminder, (alarm,))
+
+            # maybe we just started up and are in the warning window for this reminder
+            if abs(seconds_to_next_reminder) < (alarm['reminder'].warn * 60):
+                return self.enter(1, 1, self.show_reminder, (alarm,))
+
+        # otherwise, we have missed/run this reminder and need to schedule
+        #  the next occurance of the alarm far into the future
+        days_offset = self._days_until_next_alarm(alarm)
+        seconds_to_next_reminder = \
+            self._seconds_to_next_reminder(alarm, days_offset=days_offset)
+        print "Next update in %s for %s" % (datetime.timedelta(seconds=seconds_to_next_reminder), alarm['path'])
+        return self.enter(seconds_to_next_reminder, 1,
+                          self.show_reminder, (alarm,))
+
+
+
 
 if __name__ == "__main__":
     try:

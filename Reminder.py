@@ -4,8 +4,10 @@ import tkFont
 import Tkinter as tk
 
 """
- Implement once command
- Implement get full datetime
+TODO:
+     Implement once command
+     Implement get full datetime
+     Logging
 """
 
 
