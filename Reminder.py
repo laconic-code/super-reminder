@@ -257,7 +257,7 @@ def serialize(reminder):
 
     time will always be changed to 24 hour format
 
-    TODO: do simplification with days
+    TODO: do simplification with days (all days selected -> everyday)
     """
     if not isinstance(reminder, Reminder):
         raise ArgumentError("reminder is not a reminder object")

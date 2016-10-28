@@ -2,16 +2,39 @@ from time import *
 from sys import argv
 from Tkinter import *
 import datetime
+import colorsys
 
 import Reminder
 
 FONT_NAME = "Arial"
 FONT_SIZE = 40
+class COLOR_SCHEME:
+    HSV = 'hsv'
+    RGB = 'rgb'
+    TOGGLE = 'toggle'
+COLOR = COLOR_SCHEME.TOGGLE
 
 """
 TODO:
 
 """
+
+def map_yellow_to_red(percentage):
+    """maps decreasing percentage to redder values"""
+    if COLOR == COLOR_SCHEME.HSV:
+        # 0.2 is yellow
+        # 0.0 is red
+        r, g, b = colorsys.hsv_to_rgb(.20 * percentage, 1.0, 1.0)
+        return '#%02x%02x%02x' % (255 * r, 255 * g, 255 * b)
+
+    if COLOR == COLOR_SCHEME.RGB:
+        return '#%02x%02x%02x' % (255, 255 * percentage, 0)
+
+    if COLOR == COLOR_SCHEME.TOGGLE:
+        # yellow four-fifths, red the last fifth
+        if percentage < 0.2:
+            return 'red'
+        return 'yellow'
 
 class SuperReminder(Tk):
     def __init__(self, reminder, *args, **kwargs):
@@ -49,12 +72,20 @@ class SuperReminder(Tk):
         if not self.out_of_time:
             delta = reminder.time - datetime.datetime.now()
             delta = delta - datetime.timedelta(microseconds=delta.microseconds, days=delta.days)
+
             if delta.total_seconds() > 0:
                 countdown_str = str(delta)
             else:
                 self.out_of_time = True
-                for element in (self.time_frame, self.time_label, self.countdown_label, self.message_label, self.button_frame):
-                    element.config(bg="darkgrey")
+
+            color = None
+            if delta.total_seconds() < 300:
+                # < 5 minutes
+                color = map_yellow_to_red(float(delta.total_seconds() / 300.0))
+                for element in (self.time_frame, self.time_label, self.countdown_label, self.button_frame):
+                    element.config(bg=color)
+                for element in (self.time_label, self.countdown_label):
+                    element.config(fg='black')
 
         self.countdown_str.set(countdown_str + " Left")
         self.time_str.set(strftime("%I:%M:%S %p"))
