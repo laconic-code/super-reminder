@@ -3,7 +3,8 @@ from time import *
 from sys import argv
 from os import environ
 from os.path import join
-from Tix import *
+from Tkinter import *
+from ttk import Combobox
 from tkFileDialog import *
 import Reminder
 from Reminder import FONTS
@@ -18,6 +19,39 @@ TODO:
     make about page
     Logging
 """
+
+
+class LabelEntry(Frame):
+    def __init__(self, root, *args, **kwargs):
+        label = kwargs.pop('label', '')
+        Frame.__init__(self, root, *args, **kwargs)
+        self.label = Label(self, text=label)
+        self.entry = Entry(self)
+        self.label.pack(side=LEFT)
+        self.entry.pack(side=RIGHT)
+
+class ComboBox(Frame):
+    def __init__(self, root, *args, **kwargs):
+        label_kwargs = dict(text=kwargs.pop('label', ''))
+        combobox_kwargs = dict()
+        combobox_kwargs['state'] = kwargs.pop('state', 'normal')
+        combobox_kwargs['textvariable'] = kwargs.pop('textvariable', None)
+
+        Frame.__init__(self, root, *args, **kwargs)
+
+        self.label = Label(self, **label_kwargs)
+        self.combobox = Combobox(self, **combobox_kwargs)
+        self.values = list()
+
+        self.label.pack(side=LEFT)
+        self.combobox.pack(side=RIGHT)
+
+    def insert(self, position, value):
+        if position.lower() == 'end':
+          self.values.append(value)
+        else:
+          self.values.insert(int(position), value)
+        self.combobox['values'] = self.values
 
 
 class CenteredText(Text):
@@ -104,22 +138,29 @@ class Builder(Tk):
         self.entry_frame = Frame(self)
         self.entry_centered_frame = Frame(self.entry_frame)
 
+        self.status_bar_text = StringVar()
+        self.status_bar = Label(textvariable=self.status_bar_text, fg='gray')
+
         self.time = StringVar()
         self.time_entry = LabelEntry(self.entry_centered_frame, label="Time: ")
         self.time_entry.entry.config(textvariable=self.time)
         self.time_entry_background_default = self.time_entry.entry.cget("bg")
-        self.time_entry_tooltip = Balloon(self.entry_centered_frame)
-        self.time_entry_tooltip.bind_widget(self.time_entry.entry, balloonmsg="24 or 12 hour format: HH:MM [am/pm]")
+        self.time_entry.entry.bind("<Enter>", lambda event : self.status_bar_text.set("24 or 12 hour format: HH:MM [am/pm]"))
+        self.time_entry.entry.bind("<Leave>", lambda event : self.status_bar_text.set(""))
 
         self.day_chooser = Listbox(self.entry_centered_frame, selectmode=EXTENDED, exportselection=0, height=7, width=(len(max(DAYS, key=len)) + 1))
+        self.day_chooser.bind("<Enter>", lambda event : self.status_bar_text.set("ctrl click or shift click to select multiple days"))
+        self.day_chooser.bind("<Leave>", lambda event : self.status_bar_text.set(""))
 
         self.font_name = StringVar()
         self.font_size = StringVar()
-        self.font_name_chooser = ComboBox(self.entry_centered_frame, label="Font: ", dropdown=1, editable=0, variable=self.font_name)
-        self.font_size_chooser = ComboBox(self.entry_centered_frame, label="Size:  ", dropdown=1, editable=1, variable=self.font_size)
+        self.font_name_chooser = ComboBox(self.entry_centered_frame, label="Font: ", state="readonly", textvariable=self.font_name)
+        self.font_size_chooser = ComboBox(self.entry_centered_frame, label="Size: ", state="normal", textvariable=self.font_size)
 
         self.warning_time = StringVar()
-        self.warning_time_chooser = ComboBox(self.entry_centered_frame, label="Warning Minutes", dropdown=1, editable=1, variable=self.warning_time)
+        self.warning_time_chooser = ComboBox(self.entry_centered_frame, label="Warning Minutes: ", state='normal', textvariable=self.warning_time)
+        self.warning_time_chooser.bind("<Enter>", lambda event : self.status_bar_text.set("The number of minutes before hand to start the reminder"))
+        self.warning_time_chooser.bind("<Leave>", lambda event : self.status_bar_text.set(""))
 
         ############
         # Defaults #
@@ -159,6 +200,7 @@ class Builder(Tk):
         self.message_entry_frame.pack(side=TOP, expand=True, fill="both")
 
         self.entry_centered_frame.pack()
+        self.status_bar.pack()
 
         self.day_chooser.grid(         row=0, column=0, sticky="nsew", rowspan=3)
         self.time_entry.grid(          row=0, column=1, sticky="ew", padx=10)
@@ -280,6 +322,8 @@ class Builder(Tk):
         size = int(self.font_size.get())
         if size < 8:
             self.font_size.set('8')
+        if size > 200:
+            self.font_size.set('200')
         self.message_entry.config(font=(self.font_name.get(), int(self.font_size.get())))
         self._edited(True)
 
