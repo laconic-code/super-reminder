@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 from time import *
 from sys import argv
-from os import environ
-from os.path import join
+from os import environ, makedirs
+from os.path import join, exists
 from Tkinter import *
 from ttk import Combobox
 from tkFileDialog import *
@@ -234,6 +234,8 @@ class Builder(Tk):
         self._edited(True)
 
     def Open(self, *args, **kwargs):
+        if not exists(CONFIG_DIR):
+            makedirs(CONFIG_DIR)
         file_path = askopenfilename(initialdir=CONFIG_DIR)
         if not file_path:
             return
@@ -290,6 +292,8 @@ class Builder(Tk):
         self._edited(False)
 
     def Save_as(self, *args, **kwargs):
+        if not exists(CONFIG_DIR):
+            makedirs(CONFIG_DIR)
         file_path = asksaveasfilename(initialdir=CONFIG_DIR)
 
         if not file_path:
